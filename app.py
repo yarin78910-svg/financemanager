@@ -1,115 +1,171 @@
 import streamlit as st
 import pandas as pd
+from openai import OpenAI
 
-st.set_page_config(page_title="מנהל השקעות חכם", layout="wide")
+st.set_page_config(page_title="מנהל פיננסי חכם", layout="wide")
 
-st.title("💼 מנהל השקעות ויעדים חכם")
+# ========================
+# STATE
+# ========================
+if "assets" not in st.session_state:
+    st.session_state.assets = []
+if "goals" not in st.session_state:
+    st.session_state.goals = []
+if "income" not in st.session_state:
+    st.session_state.income = 12000
+if "expenses" not in st.session_state:
+    st.session_state.expenses = 8000
 
-# -----------------------
-# קלטים
-# -----------------------
+# ========================
+# FUNCTIONS
+# ========================
+def total_assets():
+    return sum(a["amount"] for a in st.session_state.assets)
 
-st.sidebar.header("📥 הזן נתונים")
+def free_cash():
+    return st.session_state.income - st.session_state.expenses
 
-initial = st.sidebar.number_input("💰 סכום התחלתי", value=10000)
-monthly = st.sidebar.number_input("📆 הפקדה חודשית", value=1000)
-years = st.sidebar.slider("⏳ טווח השקעה (שנים)", 1, 30, 5)
-rate = st.sidebar.number_input("📈 תשואה שנתית (%)", value=7.0)
+def avg_return():
+    if not st.session_state.assets:
+        return 0
+    total = total_assets()
+    return sum(a["amount"] * a["return"] for a in st.session_state.assets) / total
 
-goal = st.sidebar.number_input("🎯 סכום יעד", value=100000)
+def projection(months=60):
+    total = total_assets()
+    r = avg_return() / 100 / 12
+    values = []
+    for _ in range(months):
+        total = total * (1 + r)
+        values.append(total)
+    return values
 
-# -----------------------
-# חישוב
-# -----------------------
+# ========================
+# NAV
+# ========================
+page = st.sidebar.radio("ניווט", [
+    "🏠 דשבורד",
+    "💼 נכסים",
+    "🎯 יעדים",
+    "🤖 סוכן AI"
+])
 
-months = years * 12
-monthly_rate = rate / 100 / 12
+# ========================
+# DASHBOARD
+# ========================
+if page == "🏠 דשבורד":
+    st.title("📊 דשבורד פיננסי")
 
-values = []
-total = initial
+    col1, col2, col3 = st.columns(3)
+    col1.metric("💰 שווי כולל", f"{int(total_assets()):,} ₪")
+    col2.metric("📥 הכנסה", f"{st.session_state.income:,} ₪")
+    col3.metric("📤 הוצאות", f"{st.session_state.expenses:,} ₪")
 
-for m in range(months):
-    total = total * (1 + monthly_rate) + monthly
-    values.append(total)
+    st.metric("💸 תזרים פנוי", f"{free_cash():,} ₪")
 
-df = pd.DataFrame({
-    "חודש": list(range(1, months + 1)),
-    "שווי תיק": values
-})
+    st.divider()
 
-final_value = values[-1]
-invested = initial + monthly * months
-profit = final_value - invested
+    st.subheader("📈 תחזית תיק")
+    st.line_chart(projection())
 
-# -----------------------
-# תצוגה ראשית
-# -----------------------
+# ========================
+# ASSETS
+# ========================
+elif page == "💼 נכסים":
+    st.title("💼 ניהול נכסים")
 
-col1, col2, col3 = st.columns(3)
+    with st.form("add_asset"):
+        name = st.text_input("שם נכס")
+        amount = st.number_input("שווי", value=0)
+        ret = st.number_input("תשואה שנתית (%)", value=5.0)
+        submit = st.form_submit_button("➕ הוסף")
 
-col1.metric("💰 שווי סופי", f"{int(final_value):,} ₪")
-col2.metric("📥 סה״כ הפקדות", f"{int(invested):,} ₪")
-col3.metric("📈 רווח", f"{int(profit):,} ₪")
+        if submit:
+            st.session_state.assets.append({
+                "name": name,
+                "amount": amount,
+                "return": ret
+            })
 
-st.divider()
+    if st.session_state.assets:
+        df = pd.DataFrame(st.session_state.assets)
+        st.dataframe(df)
 
-# -----------------------
-# גרף
-# -----------------------
+        for i, a in enumerate(st.session_state.assets):
+            if st.button(f"❌ מחק {a['name']}", key=i):
+                st.session_state.assets.pop(i)
+                st.rerun()
 
-st.subheader("📊 התפתחות התיק לאורך זמן")
-st.line_chart(df.set_index("חודש"))
+# ========================
+# GOALS
+# ========================
+elif page == "🎯 יעדים":
+    st.title("🎯 יעדים")
 
-# -----------------------
-# בדיקת יעד
-# -----------------------
+    with st.form("add_goal"):
+        name = st.text_input("שם יעד")
+        amount = st.number_input("סכום יעד", value=50000)
+        months = st.number_input("חודשים", value=24)
+        submit = st.form_submit_button("➕ הוסף יעד")
 
-st.subheader("🎯 בדיקת יעד")
+        if submit:
+            st.session_state.goals.append({
+                "name": name,
+                "amount": amount,
+                "months": months
+            })
 
-if final_value >= goal:
-    st.success("✅ אתה צפוי להגיע ליעד!")
-else:
-    needed = (goal - final_value) / months
-    st.error("❌ לא מגיע ליעד")
-    st.write(f"צריך להוסיף בערך {int(needed):,} ₪ לחודש כדי להגיע ליעד")
+    for g in st.session_state.goals:
+        needed = (g["amount"] - total_assets()) / g["months"]
 
-# -----------------------
-# AI פשוט (ללא API)
-# -----------------------
+        st.subheader(g["name"])
+        st.write(f"יעד: {g['amount']:,} ₪")
+        st.write(f"חיסכון חודשי דרוש: {int(needed):,} ₪")
 
-st.subheader("🧠 ניתוח חכם")
+        if needed > free_cash():
+            st.error("❌ לא ריאלי")
+        else:
+            st.success("✅ אפשרי")
 
-analysis = ""
+# ========================
+# AI AGENT
+# ========================
+elif page == "🤖 סוכן AI":
+    st.title("🤖 סוכן פיננסי חכם")
 
-if rate < 4:
-    analysis += "התשואה נמוכה יחסית, ייתכן שאתה במסלול סולידי מאוד.\n"
+    question = st.text_area("שאל שאלה")
 
-if monthly < 500:
-    analysis += "קצב ההפקדה נמוך — הגדלה קטנה יכולה לשנות משמעותית את התוצאה.\n"
+    if st.button("נתח"):
+        try:
+            client = OpenAI(api_key=st.secrets["OPENAI_API_KEY"])
 
-if years < 3:
-    analysis += "טווח השקעה קצר — קשה לייצר ריבית דריבית משמעותית.\n"
+            prompt = f"""
+            אתה יועץ פיננסי.
 
-if final_value > goal:
-    analysis += "המצב שלך טוב — אפשר לשקול יעד גבוה יותר או הפחתת סיכון.\n"
+            שווי כולל: {total_assets()}
+            הכנסה: {st.session_state.income}
+            הוצאות: {st.session_state.expenses}
+            תזרים פנוי: {free_cash()}
 
-if analysis == "":
-    analysis = "התיק שלך נראה מאוזן יחסית לפי הנתונים."
+            נכסים:
+            {st.session_state.assets}
 
-st.info(analysis)
+            יעדים:
+            {st.session_state.goals}
 
-# -----------------------
-# סימולציה נוספת
-# -----------------------
+            שאלה:
+            {question}
 
-st.subheader("🔄 מה קורה אם משנים דברים?")
+            תן תשובה חכמה, ברורה וישירה.
+            """
 
-new_rate = st.slider("שנה תשואה ל...", 1, 15, int(rate))
-new_monthly = st.slider("שנה הפקדה ל...", 0, 5000, int(monthly))
+            res = client.chat.completions.create(
+                model="gpt-4o-mini",
+                messages=[{"role": "user", "content": prompt}]
+            )
 
-new_total = initial
+            st.success(res.choices[0].message.content)
 
-for m in range(months):
-    new_total = new_total * (1 + (new_rate/100/12)) + new_monthly
-
-st.write(f"📈 שווי חדש משוער: {int(new_total):,} ₪")
+        except Exception as e:
+            st.error("בעיה ב-AI")
+            st.write(e)
